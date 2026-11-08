@@ -15,6 +15,7 @@ on:
       - stream-destinations.js
       - radio-layout.js
       - radio-artwork.js
+      - radio-placeholder.js
       - public/**
       - .github/workflows/docker-publish.yml
 
