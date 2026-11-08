@@ -1,0 +1,13 @@
+# Optional RTSP relay for VRChat-compatible streaming.
+# Add after compose.ghcr.yml so this shares its default Docker network.
+# CAUTION: 8554/TCP is publicly reachable when the host firewall allows it.
+# Protect the service with MediaMTX authentication and/or restrict IP access
+# before use on an untrusted public network.
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3
+    restart: unless-stopped
+    environment:
+      MTX_RTSPTRANSPORTS: tcp
+    ports:
+      - "8554:8554/tcp"
