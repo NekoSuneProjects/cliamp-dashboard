@@ -1,4 +1,4 @@
-# CLIAMP RTMP Dashboard
+# CLIAMP RTMP / SRT Dashboard
 
 A lightweight, authenticated Node.js control panel for turning existing CLIAMP radio streams into **720p RTMP/RTMPS live video**. Intended to run on a VPS or a dedicated encoding machine, **not** on the Raspberry Pi hosting CLIAMP.
 
@@ -83,6 +83,72 @@ No audio player changes are required on the Raspberry Pi. CLIAMP's existing HLS 
 - `DELETE /api/stations/:id`: delete station
 - `POST /api/stations/:id/start`: start station
 - `POST /api/stations/:id/stop`: stop station
+
+
+## RTMP, RTMPS, SRT, RTSP and VRChat RTSPT publishing
+
+Choose the format for each destination in the dashboard. **RTMPS was already supported** and remains available. An RTSP-compatible server such as MediaMTX is required to *receive* RTSP publishing; FFmpeg cannot create a multi-client RTSP viewer server from a URL alone.
+
+| Destination selector | Example publishing URL | Transport / FFmpeg output |
+|---|---|---|
+| RTMP | `rtmp://relay.example/live/key` | FLV over RTMP |
+| RTMPS | `rtmps://relay.example/live/key` | FLV over TLS |
+| SRT | `srt://relay.example:9000?mode=caller&latency=200000` | MPEG-TS over SRT UDP |
+| RTSP | `rtsp://relay.example:8554/radio` | RTSP ANNOUNCE, UDP transport |
+| RTSPT (VRChat TCP style) | `rtspt://relay.example:8554/radio` | Internally translated to `rtsp://`, RTSP ANNOUNCE with TCP transport |
+
+**Important:** `rtspt://` is a **VRChat player-side URL convention**, not a supported FFmpeg protocol. The dashboard translates it when publishing. Your streaming server must support RTSP publishing (ANNOUNCE/RECORD) and distribute the stream to viewers. RTSP URL compatibility varies by VRChat player and build; some Quest clients only accept `rtsp://` while PC players may require `rtspt://`. A live receiver and each intended VRChat client should be tested before relying on cross-platform playback. No direct VRChat playback server is bundled in the dashboard.
+
+### Optional RTSP relay for VRChat playback
+
+If you don't already have an RTSP server that accepts publishers, run the provided optional MediaMTX relay alongside the GHCR dashboard. It is **not** included in the GHCR application image:
+
+```bash
+docker compose -f compose.ghcr.yml -f compose.rtsp-relay.yml up -d
+```
+
+The relay is on the same Docker network as the dashboard. In the dashboard add a **RTSPT** publishing destination pointing at:
+
+```text
+rtspt://mediamtx:8554/monstercat-music
+```
+
+FFmpeg will translate that to `rtsp://mediamtx:8554/monstercat-music` and publish using TCP. For a VRChat player outside Docker, try these **viewer** addresses using the VPS public hostname, not the Docker service hostname:
+
+```text
+rtsp://YOUR-VPS-HOST:8554/monstercat-music
+rtspt://YOUR-VPS-HOST:8554/monstercat-music
+```
+
+The included MediaMTX profile enables **TCP only** to avoid Docker's UDP/NAT issues. VRChat Quest/Android versus PC RTSP support depends on client version and video-player implementation; Quest may require UDP or an updated player, and therefore this optional TCP-only setup is **not guaranteed** to work on both clients. For broader RTSP UDP/TCP support, configure a dedicated MediaMTX service with host networking and firewall/authentication suited to your deployment.
+
+**Security:** the example relay has no publisher authentication by default and exposes port 8554/TCP. Do not expose it to untrusted networks without configuring MediaMTX authentication and appropriate firewall rules. Restrict access while testing.
+
+### FFmpeg exit 234 / tee outputs failed
+
+The previous FFmpeg argument builder contained a badly escaped `fifo_options` string (for example the trailing `er_any_error'` in the reported log). That could cause FFmpeg's tee output to fail with an invalid argument. The new builder removes that malformed string and uses separate muxer options for each supported destination. We successfully tested the corrected tee syntax locally with simultaneous FLV and MPEG-TS file outputs. This is not a live RTMP/RTSP/SRT receiver test.
+
+If you still see `All tee outputs failed` after upgrading: verify the server address, publishing stream key, network reachability, output protocol/port, and whether the receiver accepts the incoming format. RTSP uses port 8554 in the example; SRT needs outbound UDP; RTMPS needs TLS. Low 1 FPS output can also be rejected by some platforms. FFmpeg logs are exposed through the worker error with publishing URLs redacted.
+
+
+## SRT restreaming (PR #3)
+
+Stations can now publish **RTMP, RTMPS and SRT simultaneously** using one 720p H.264/AAC encode per station. Choose the protocol separately for each destination in the NekoSune dashboard. RTMP/RTMPS is muxed as FLV; SRT is muxed as **MPEG-TS**.
+
+For example, add an SRT destination:
+
+```text
+Protocol: SRT
+Name: Remote SRT ingest
+Publishing URL: srt://ingest.example.org:9000?mode=caller&latency=200000
+```
+
+The destination must be a reachable **SRT listener**, and the VPS must be allowed to make outbound UDP connections to its port. This feature publishes using SRT **caller** mode only; it does not create a public inbound SRT ingest listener. Use an SRT relay/receiver such as your media server or a configured FFmpeg listener. A passphrase can be supplied in the URL with `passphrase` (10–79 characters) and matching receiver settings. If encrypting, configure the receiver's matching `pbkeylen` as needed.
+
+SRT publishing URLs may contain sensitive passphrases or stream IDs. Treat `data/stations.json` as private. The API returns only the destination name, protocol, enabled/configured state and generated ID—not the full URL. The worker redacts publishing URLs in its captured errors.
+
+**Limits:** The SRT output currently sends MPEG-TS with the same low-FPS 720p video as RTMP, and shares the encoding budget. Platform-specific SRT stream ID / encryption parameters must be entered in the URL. FFmpeg-process status is not proof every destination is receiving media; verify the actual SRT receiver. Some destinations require frame rates higher than 1 FPS.
+
 
 ## Future development
 
