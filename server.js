@@ -55,7 +55,7 @@ function validate(x,old){
   const requestedProtocol=String(d.protocol||previous?.protocol||'').toLowerCase();
   const validated=url?validatePublishingUrl(url,requestedProtocol):null;
   const protocol=validated?.protocol||requestedProtocol||'rtmp';
-  if(!['rtmp','rtmps','srt'].includes(protocol))throw Error('Invalid destination protocol');
+  if(!['rtmp','rtmps','srt','rtsp','rtspt'].includes(protocol))throw Error('Invalid destination protocol');
   return {id:previous?.id||randomUUID(),name,url:validated?.url||'',protocol,enabled:d.enabled!==false};
  });
  return {id:old?.id||randomUUID(),name,tagline,sourceId,audioUrl,fps,bitrate,autoStart:x.autoStart===true,destinations};
