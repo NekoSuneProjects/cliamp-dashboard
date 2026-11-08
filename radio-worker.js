@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {setTimeout as sleep} from 'node:timers/promises';
 import sharp from 'sharp';
+import {svgBackground,retainArtwork} from './radio-layout.js';
 import {teeOutput,redactPublishingURLs} from './stream-destinations.js';
 
 const safe = value => String(value ?? '').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&apos;'}[c]));
@@ -44,13 +45,6 @@ async function artwork(baseURL,stationId,signal){
  }
  return Buffer.concat(parts);
 }
-function svgBackground(s,track){
- const title=safe(clip(track.title||'Live Radio',72));
- const artist=safe(clip(track.artist||s.name,72));
- const station=safe(clip(s.name,65));
- const subtitle=safe(clip(s.tagline||'LIVE RADIO',60));
- return Buffer.from('<svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111827"/><stop offset="1" stop-color="#273469"/></linearGradient></defs><rect width="1280" height="720" fill="url(#bg)"/><rect x="64" y="68" width="1152" height="584" rx="32" fill="#0f172acc"/><text x="540" y="180" font-family="DejaVu Sans,sans-serif" font-size="35" fill="#70e7c4">'+station+'</text><text x="540" y="258" font-family="DejaVu Sans,sans-serif" font-size="22" fill="#b8c5da">'+subtitle+'</text><text x="540" y="390" font-family="DejaVu Sans,sans-serif" font-size="33" fill="#ffffff">'+title+'</text><text x="540" y="445" font-family="DejaVu Sans,sans-serif" font-size="26" fill="#b8c5da">'+artist+'</text><circle cx="1110" cy="170" r="12" fill="#ff5266"/><text x="1136" y="180" font-family="DejaVu Sans,sans-serif" font-size="24" fill="white">LIVE</text></svg>');
-}
 async function render(s,track,artBuffer){
  const base=sharp(svgBackground(s,track)).png();
  const overlays=[];
@@ -66,6 +60,7 @@ export class RadioWorker {
  constructor(station,baseURL,onUpdate){
   this.station=station;this.baseURL=baseURL;this.onUpdate=onUpdate;
   this.running=false;this.ff=null;this.abort=null;this.loop=null;
+  this.lastTrack=null;this.lastArt=null;this.lastArtFetch=0;
   this.state={status:'stopped',error:null,restarts:0,updatedAt:null};
  }
  publish(state){this.state={...this.state,...state};this.onUpdate(this.station.id,this.state);}
@@ -117,20 +112,40 @@ export class RadioWorker {
    ff.once('error',reject);
    ff.once('exit',(code,signal)=>resolve({code,signal}));
   });
-  let frame=await render(s,{},null),lastKey='',lastArtFetch=0;
+  let frame=await render(s,this.lastTrack||{},this.lastArt);
   const update=async()=>{
    if(!this.running)return;
    try {
-    const data=await fetchJSON(new URL('/api/v1/radios/'+s.sourceId,this.baseURL),AbortSignal.timeout(5000));
-    const track=data.now_playing||{};
-    const key=[track.title,track.artist].join('|');
+    const sourceId=s.sourceId||new URL(s.audioUrl).pathname.split('/')[1];
+    const data=await fetchJSON(new URL('/api/v1/radios/'+sourceId,this.baseURL),AbortSignal.timeout(5000));
+    const reported=data.now_playing||{};
+    const title=typeof reported.title==='string'?reported.title.trim():'';
+    const artist=typeof reported.artist==='string'?reported.artist.trim():'';
+    // A momentarily empty metadata response must not clear the displayed title.
+    const track=(title||artist)?{title,artist}:this.lastTrack||{};
+    const old=this.lastTrack||{};
+    const trackChanged=track.title!==old.title||track.artist!==old.artist;
     const now=Date.now();
-    if(key!==lastKey || now-lastArtFetch>30000){
-     lastKey=key;lastArtFetch=now;
-     const art=await artwork(this.baseURL,s.sourceId,AbortSignal.timeout(5000)).catch(()=>null);
-     frame=await render(s,track,art);
-     this.publish({track:{title:track.title||'',artist:track.artist||''},updatedAt:new Date().toISOString()});
+    const due=trackChanged||now-this.lastArtFetch>=30000;
+    let artChanged=false;
+    if(due){
+     // Record the attempt so temporary errors retry later without clearing art.
+     this.lastArtFetch=now;
+     if(this.baseURL && sourceId){
+      const fresh=await artwork(this.baseURL,sourceId,AbortSignal.timeout(5000)).catch(()=>null);
+      if(fresh?.length){
+       this.lastArt=retainArtwork(this.lastArt,fresh);
+       artChanged=true;
+      }
+     }
     }
+    if(trackChanged||artChanged){
+     // Keep the last successfully rendered frame until the new one is ready.
+     const nextFrame=await render(s,track,this.lastArt);
+     frame=nextFrame;
+     this.lastTrack=track;
+    }
+    if(trackChanged||artChanged)this.publish({track:{title:track.title||'',artist:track.artist||''},updatedAt:new Date().toISOString()});
    }catch(e){this.publish({metadataError:e.message});}
   };
   await update();
