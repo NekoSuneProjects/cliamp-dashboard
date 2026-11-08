@@ -21,6 +21,8 @@ jobs:
       - run: node --check server.js
       - run: node --check radio-worker.js
       - run: node --check radio-layout.js
+      - run: node --check radio-artwork.js
+      - run: node --check radio-placeholder.js
       - run: node --check station-metadata.js
       - run: node --check stream-destinations.js
       - run: npm test

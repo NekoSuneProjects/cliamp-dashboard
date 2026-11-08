@@ -2,6 +2,8 @@ import {spawn} from 'node:child_process';
 import {setTimeout as sleep} from 'node:timers/promises';
 import sharp from 'sharp';
 import {svgBackground,retainArtwork} from './radio-layout.js';
+import {resolveCover} from './radio-artwork.js';
+import {cdCasePlaceholder} from './radio-placeholder.js';
 import {teeOutput,redactPublishingURLs} from './stream-destinations.js';
 
 const safe = value => String(value ?? '').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&apos;'}[c]));
@@ -29,30 +31,18 @@ export async function discover(baseURL,signal) {
   nowPlaying:s.now_playing||{},listeners:s.listeners||0
  }));
 }
-async function artwork(baseURL,stationId,signal){
- const u=new URL('/'+stationId+'/art.png',baseURL);
- const response=await fetch(u,{signal,redirect:'error'});
- if(response.status===404)return null;
- if(!response.ok)throw Error('Artwork HTTP '+response.status);
- if(!String(response.headers.get('content-type')||'').includes('image/'))throw Error('Artwork is not an image');
- const len=Number(response.headers.get('content-length')||0);
- if(len>maxArt)throw Error('Artwork too large');
- let size=0;const parts=[];
- for await(const chunk of response.body){
-  size+=chunk.length;
-  if(size>maxArt){await response.body.cancel().catch(()=>{});throw Error('Artwork too large');}
-  parts.push(chunk);
- }
- return Buffer.concat(parts);
-}
 async function render(s,track,artBuffer){
  const base=sharp(svgBackground(s,track)).png();
  const overlays=[];
+ const fallbackCover=cdCasePlaceholder();
+ if(!artBuffer){
+  overlays.push({input:fallbackCover,left:100,top:170});
+ }
  if(artBuffer){
   try{
    const cover=await sharp(artBuffer,{limitInputPixels:12_000_000}).resize(390,390,{fit:'contain',background:'#182337'}).png().toBuffer();
    overlays.push({input:cover,left:100,top:170});
-  }catch{} // Bad or missing artwork must not interrupt the radio.
+  }catch{overlays.push({input:fallbackCover,left:100,top:170});} // Malformed cover bytes must not leave an empty area.
  }
  return base.composite(overlays).jpeg({quality:83,mozjpeg:false}).toBuffer();
 }
@@ -131,13 +121,15 @@ export class RadioWorker {
     if(due){
      // Record the attempt so temporary errors retry later without clearing art.
      this.lastArtFetch=now;
-     if(this.baseURL && sourceId){
-      const fresh=await artwork(this.baseURL,sourceId,AbortSignal.timeout(5000)).catch(()=>null);
-      if(fresh?.length){
-       this.lastArt=retainArtwork(this.lastArt,fresh);
-       artChanged=true;
-      }
+     const resolved=await resolveCover({
+      baseURL:this.baseURL,sourceId,artist:track.artist,title:track.title,
+      previous:this.lastArt,signal:AbortSignal.timeout(8000)
+     });
+     if(resolved.buffer && (resolved.buffer!==this.lastArt || !this.lastTrack)){
+      this.lastArt=retainArtwork(this.lastArt,resolved.buffer);
+      artChanged=true;
      }
+     this.publish({artworkSource:resolved.source,artworkError:resolved.source==='placeholder'?'No song cover available yet':null});
     }
     if(trackChanged||artChanged){
      // Keep the last successfully rendered frame until the new one is ready.
