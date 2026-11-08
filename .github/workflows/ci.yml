@@ -20,4 +20,5 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: node --check server.js
       - run: node --check radio-worker.js
+      - run: node --check station-metadata.js
       - run: npm test
