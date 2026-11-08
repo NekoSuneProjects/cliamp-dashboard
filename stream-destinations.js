@@ -1,55 +1,56 @@
-// Broadcast destination types use one encoded H.264/AAC stream, but different muxers.
-// SRT publishing is caller-mode MPEG-TS; RTMP and RTMPS publishing use FLV.
-export const PROTOCOLS = Object.freeze(['rtmp', 'rtmps', 'srt']);
+// One encoder fans out H.264/AAC into format-specific outputs.
+// RTSP ANNOUNCE publishes to a compatible RTSP server (e.g. MediaMTX).
+// rtspt:// is a VRChat playback convention, not an FFmpeg publishing protocol.
+// We translate its URL to rtsp:// and use RTSP over TCP.
+export const PROTOCOLS=Object.freeze(['rtmp','rtmps','srt','rtsp','rtspt']);
 
-export function outputProtocol(destination) {
-  const value = String(destination?.protocol || '').trim().toLowerCase();
-  if (value && !PROTOCOLS.includes(value)) throw Error('Unsupported destination type');
-  const url = String(destination?.url || '').trim();
-  if (!url) return value || 'rtmp';
-  let parsed;
-  try { parsed = new URL(url); } catch { throw Error('Invalid publishing URL'); }
-  const scheme = parsed.protocol.slice(0, -1);
-  if (!PROTOCOLS.includes(scheme)) throw Error('Publishing URL must start with rtmp://, rtmps:// or srt://');
-  if (value && value !== scheme) throw Error('Destination protocol does not match its URL');
-  if (!parsed.hostname || parsed.username || parsed.password) throw Error('Publishing URL must have a host without user-info credentials');
-  if (scheme === 'srt') {
-    if (!parsed.port) throw Error('SRT destination requires an explicit UDP port');
-    const mode = parsed.searchParams.get('mode');
-    if (mode && mode !== 'caller') throw Error('SRT publishing requires mode=caller');
-    if (!mode) parsed.searchParams.set('mode', 'caller');
-    const pass = parsed.searchParams.get('passphrase');
-    if (pass && (pass.length < 10 || pass.length > 79)) throw Error('SRT passphrase must be 10–79 characters');
-  }
-  return scheme;
+export function outputProtocol(destination){
+ const selected=String(destination?.protocol||'').toLowerCase().trim();
+ if(selected&&!PROTOCOLS.includes(selected))throw Error('Unsupported publishing protocol');
+ const raw=String(destination?.url||'').trim();
+ if(!raw)return selected||'rtmp';
+ let url;try{url=new URL(raw)}catch{throw Error('Invalid publishing URL')}
+ const scheme=url.protocol.slice(0,-1).toLowerCase();
+ if(!PROTOCOLS.includes(scheme))throw Error('Use rtmp://, rtmps://, srt://, rtsp:// or rtspt://');
+ if(selected&&selected!==scheme&&!(selected==='rtspt'&&scheme==='rtsp')&&!(selected==='rtsp'&&scheme==='rtspt'))throw Error('Destination protocol does not match its URL');
+ if(!url.hostname||url.username||url.password)throw Error('Publishing URL must have a host without user-info credentials');
+ if(scheme==='srt'){
+  if(!url.port)throw Error('SRT requires an explicit UDP port');
+  if(url.searchParams.has('mode')&&url.searchParams.get('mode')!=='caller')throw Error('SRT publishing requires mode=caller');
+  const secret=url.searchParams.get('passphrase');
+  if(secret&&(secret.length<10||secret.length>79))throw Error('SRT passphrase must be 10–79 characters');
+ }
+ if((scheme==='rtsp'||scheme==='rtspt')&&(!url.pathname||url.pathname==='/'))throw Error('RTSP publishing requires a stream path (for example /radio)');
+ return selected||scheme;
 }
 
-export function validatePublishingUrl(url, selectedProtocol) {
-  const candidate = {url, protocol:selectedProtocol};
-  const protocol = outputProtocol(candidate);
-  const parsed = new URL(url);
-  if (protocol === 'srt' && !parsed.searchParams.has('mode')) parsed.searchParams.set('mode','caller');
-  return {protocol, url:parsed.href};
+export function validatePublishingUrl(url,selected){
+ const protocol=outputProtocol({url,protocol:selected});
+ const parsed=new URL(url);
+ if(protocol==='srt'&&!parsed.searchParams.has('mode'))parsed.searchParams.set('mode','caller');
+ // Leave friendly rtspt:// form in stored configuration; FFmpeg gets rtsp:// later.
+ return {protocol,url:parsed.href};
 }
-
-function escapeTeeUrl(value) {
-  // Escape tee's slave separator, the bracket delimiters and the escape character.
-  // Colons in URLs are not option separators outside the leading [options] block.
-  return String(value).replaceAll('\\', '\\\\').replaceAll('|', '\\|')
-    .replaceAll('[', '\\[').replaceAll(']', '\\]');
+function escapeTee(value){
+ return String(value).replaceAll('\\','\\\\').replaceAll('|','\\|').replaceAll('[','\\[').replaceAll(']','\\]');
 }
-
-export function teeOutput(destinations) {
-  const active = destinations.filter(d => d.enabled !== false && d.url);
-  if (!active.length) throw Error('No enabled publishing destinations');
-  return active.map(destination => {
-    const {protocol, url} = validatePublishingUrl(destination.url, destination.protocol);
-    const format = protocol === 'srt' ? 'mpegts' : 'flv';
-    // FIFO isolates slow or disconnected destinations; a failed output won't halt the others.
-    return '[f=' + format + ':onfail=ignore:use_fifo=1]' + escapeTeeUrl(url);
-  }).join('|');
+export function teeOutput(destinations){
+ const active=destinations.filter(d=>d.enabled!==false&&d.url);
+ if(!active.length)throw Error('No enabled publishing destinations');
+ return active.map(d=>{
+  const {protocol,url}=validatePublishingUrl(d.url,d.protocol);
+  let format,extra='',target=url;
+  if(protocol==='rtsp'||protocol==='rtspt'){
+   format='rtsp';
+   // FFmpeg does not accept rtspt://. RTSP muxer supports TCP interleaved or UDP.
+   target=url.replace(/^rtspt:/i,'rtsp:');
+   extra=':rtsp_transport='+ (protocol==='rtspt'?'tcp':'udp');
+  }else format=protocol==='srt'?'mpegts':'flv';
+  // Do not put the colon-escaped RTMP URL or obsolete fifo_options in the
+  // option bracket: malformed tee options caused the earlier FFmpeg -22 error.
+  return '[f='+format+':onfail=ignore'+extra+']'+escapeTee(target);
+ }).join('|');
 }
-
-export function redactPublishingURLs(value) {
-  return String(value).replace(/(?:rtmps?|srt):\/\/[^\s"']+/gi, '[publishing destination redacted]');
+export function redactPublishingURLs(value){
+ return String(value).replace(/(?:rtmps?|srt|rtspt?):\/\/[^\s"']+/gi,'[publishing destination redacted]');
 }
