@@ -6,10 +6,13 @@ on:
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   dependencies:
+    name: OSV dependency vulnerability scan
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -23,15 +26,22 @@ jobs:
             scan
             --recursive
             ./
+
   secrets:
+    name: Gitleaks repository history scan
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Gitleaks secret detection
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Run the standalone open-source Gitleaks scanner instead of the
+      # gitleaks-action wrapper, which requires an org license key.
+      - name: Scan git history for leaked secrets
+        run: |
+          docker run --rm \
+            --volume "$PWD:/repo:ro" \
+            --workdir /repo \
+            ghcr.io/gitleaks/gitleaks:latest \
+            git --no-banner --redact --exit-code 1 /repo
