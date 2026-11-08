@@ -1,5 +1,5 @@
 // Read-only CLIAMP metadata client. Runs independently of video publishing.
-const validStationId = id => /^[a-z0-9-]{1,64}$/.test(id);
+const validStationId = id => typeof id === 'string' && /^[a-z0-9-]{1,64}$/.test(id);
 export function sourceIdFor(station, baseURL) {
   if (validStationId(station.sourceId)) return station.sourceId;
   if (!baseURL) return '';
