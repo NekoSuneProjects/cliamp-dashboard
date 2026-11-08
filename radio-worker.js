@@ -1,11 +1,12 @@
 import {spawn} from 'node:child_process';
 import {setTimeout as sleep} from 'node:timers/promises';
 import sharp from 'sharp';
+import {teeOutput,redactPublishingURLs} from './stream-destinations.js';
 
 const safe = value => String(value ?? '').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&apos;'}[c]));
 const clip=(s,n)=>Array.from(String(s||'')).slice(0,n).join('');
 const validId=s=>/^[a-z0-9-]{1,64}$/.test(s);
-const logSafe=s=>String(s).replace(/rtmps?:\/\/[^\s|]+\b/gi,'[RTMP destination redacted]');
+const logSafe=redactPublishingURLs;
 const maxArt=4*1024*1024;
 
 async function fetchJSON(url,signal) {
@@ -61,7 +62,6 @@ async function render(s,track,artBuffer){
  }
  return base.composite(overlays).jpeg({quality:83,mozjpeg:false}).toBuffer();
 }
-const escapeTee=url=>url.replaceAll('\\','\\\\').replaceAll('|','\\|').replaceAll('[','\\[').replaceAll(']','\\]').replaceAll(':','\\:');
 export class RadioWorker {
  constructor(station,baseURL,onUpdate){
   this.station=station;this.baseURL=baseURL;this.onUpdate=onUpdate;
@@ -71,7 +71,7 @@ export class RadioWorker {
  publish(state){this.state={...this.state,...state};this.onUpdate(this.station.id,this.state);}
  async start(){
   if(this.running)throw Error('Already running');
-  if(!this.station.destinations.some(d=>d.enabled&&d.url))throw Error('No enabled RTMP destinations');
+  if(!this.station.destinations.some(d=>d.enabled&&d.url))throw Error('No enabled RTMP/SRT destinations');
   this.running=true;this.abort=new AbortController();
   this.loop=this.supervise().catch(e=>this.publish({status:'error',error:e.message}));
   return this.state;
@@ -107,7 +107,7 @@ export class RadioWorker {
    '-c:v','libx264','-preset','ultrafast','-tune','stillimage','-pix_fmt','yuv420p','-r',String(fps),
    '-g',String(Math.max(2,fps*2)),'-b:v',bitrate+'k','-maxrate',bitrate+'k','-bufsize',(bitrate*2)+'k',
    '-c:a','aac','-b:a','128k','-ar','44100','-ac','2',
-   '-f','tee',destinations.map(d=>'[f=flv:onfail=ignore:use_fifo=1:fifo_options=attempt_recovery\\=1\\:recover_any_error\\=1]'+escapeTee(d.url)).join('|')];
+   '-f','tee',teeOutput(destinations)];
   const ff=spawn('ffmpeg',args,{stdio:['pipe','ignore','pipe']});
   this.ff=ff;this.publish({status:'starting',error:null});
   let lines='';
