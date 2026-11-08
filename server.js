@@ -4,6 +4,7 @@ import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {RadioWorker,discover} from './radio-worker.js';
 import {sourceIdFor,readMetadata} from './station-metadata.js';
+import {validatePublishingUrl,outputProtocol} from './stream-destinations.js';
 
 const PORT=Number(process.env.PORT||8096),DIR=process.env.DATA_DIR||'./data';
 const STORE=join(DIR,'stations.json'),BASE=process.env.CLIAMP_BASE_URL||'';
@@ -27,7 +28,7 @@ function publicStation(s){
  const currentTrack=live?.track?.title||live?.track?.artist?live.track:state.track;
  return {id:s.id,sourceId:s.sourceId||'',name:s.name,tagline:s.tagline||'',audioUrl:s.audioUrl,
  fps:s.fps,bitrate:s.bitrate,autoStart:!!s.autoStart,
- destinations:s.destinations.map(d=>({id:d.id,name:d.name,enabled:d.enabled,configured:!!d.url})),...state,
+ destinations:s.destinations.map(d=>({id:d.id,name:d.name,protocol:d.protocol||outputProtocol(d),enabled:d.enabled,configured:!!d.url})),...state,
  track:currentTrack||null,metadataStatus:live?.status||'checking',metadataError:live?.error||null,metadataUpdatedAt:live?.updatedAt||null};
 }
 function checkURL(value,protocols){
@@ -48,10 +49,14 @@ function validate(x,old){
  const destinations=x.destinations.map(d=>{
   const previous=old?.destinations.find(p=>p.id===d.id);
   const url=String(d.url||'').trim()||previous?.url||'';
-  if(url)checkURL(url,['rtmp:','rtmps:']);
   const name=String(d.name||'').trim();
   if(!name||name.length>90)throw Error('Destination name required');
-  return {id:previous?.id||randomUUID(),name,url,enabled:d.enabled!==false};
+  // Retain the protocol of saved destinations when the secret URL field is blank.
+  const requestedProtocol=String(d.protocol||previous?.protocol||'').toLowerCase();
+  const validated=url?validatePublishingUrl(url,requestedProtocol):null;
+  const protocol=validated?.protocol||requestedProtocol||'rtmp';
+  if(!['rtmp','rtmps','srt'].includes(protocol))throw Error('Invalid destination protocol');
+  return {id:previous?.id||randomUUID(),name,url:validated?.url||'',protocol,enabled:d.enabled!==false};
  });
  return {id:old?.id||randomUUID(),name,tagline,sourceId,audioUrl,fps,bitrate,autoStart:x.autoStart===true,destinations};
 }
