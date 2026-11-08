@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CLIAMP • RTMP Control</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui,Segoe UI,Arial;background:#0d111b;color:#e5eaf5}
+*{box-sizing:border-box}body{margin:0 auto;max-width:1100px;padding:28px}
+h1{margin:0 0 6px;font-size:30px}p{color:#9baac4}header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+button{border:0;border-radius:9px;padding:10px 15px;cursor:pointer;background:#3459dd;color:white;font-weight:650}
+button.secondary{background:#293347}button.danger{background:#8b2b40}button:disabled{opacity:.5}
+.card{border:1px solid #2c3850;border-radius:14px;background:#161e2d;padding:20px;margin:18px 0}
+.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}
+small,.muted{color:#93a3bc}label{display:block;margin:15px 0 5px;color:#b9c8de}
+input{background:#0c1422;border:1px solid #35435d;border-radius:8px;padding:11px;color:#f3f7ff;width:100%;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#8994aa;margin-right:6px}
+.running .dot{background:#47cb98}.error .dot{background:#fa7284}.starting .dot{background:#eec55b}
+.destination{border:1px solid #35435d;border-radius:10px;padding:12px;margin:10px 0}
+.msg{white-space:pre-wrap;color:#f5b8ba;min-height:22px}
+</style></head><body>
+<header><div><h1>CLIAMP • RTMP Control</h1><p>720p radio video generated on your VPS, not on your Pi.</p></div><button id="add">+ New radio station</button></header>
+<div class="msg" id="msg"></div><div id="stations"></div>
+<section class="card" id="editor" hidden>
+<h2 id="formTitle">Configure station</h2>
+<form id="form">
+<div class="grid"><div><label>Station name</label><input name="name" required maxlength="90" placeholder="Monstercat Music"></div><div><label>HLS / audio stream URL</label><input name="audioUrl" type="url" required placeholder="https://radio.example/station/vrchat/index.m3u8"></div></div>
+<div class="grid"><div><label>Local artwork file on VPS (optional)</label><input name="imagePath" placeholder="/data/art/station.png"></div><div><label>Frames per second</label><input name="fps" type="number" value="15" min="10" max="30"></div><div><label>Video bitrate (kbps)</label><input name="bitrate" type="number" value="1500" min="400" max="6000"></div></div>
+<h3>RTMP destinations</h3><p>Use the full RTMP/RTMPS publishing URL including stream key. Keys are saved on the worker and never returned by the API. Leave an existing URL empty to keep its secret.</p>
+<div id="destinations"></div><button type="button" class="secondary" id="addDest">+ Add destination</button>
+<div class="row" style="margin-top:18px"><button type="submit">Save station</button><button type="button" class="secondary" id="cancel">Cancel</button></div>
+</form>
+</section>
+<script>
+const $=id=>document.getElementById(id);let stations=[],editing=null,dests=[];
+function message(s){$('msg').textContent=s||''}
+async function api(path,method='GET',body){
+ const res=await fetch('/api'+path,{method,headers:{'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
+ let data=await res.json();if(!res.ok)throw Error(data.error||'Request failed');return data;
+}
+function text(el,content){el.textContent=content;return el}
+function node(tag,cls,content){const e=document.createElement(tag);if(cls)e.className=cls;if(content!==undefined)text(e,content);return e}
+function action(label,fn,cls='secondary'){const b=node('button',cls,label);b.type='button';b.onclick=async()=>{b.disabled=true;try{await fn();message('');await refresh()}catch(e){message(e.message)}finally{b.disabled=false}};return b}
+async function refresh(){
+ stations=await api('/stations');const el=$('stations');el.replaceChildren();
+ if(!stations.length){el.append(node('p','muted','No stations yet. Create one to start broadcasting.'));return;}
+ for(const s of stations){
+  const card=node('article','card '+s.status);
+  const h=node('div','row between'),title=node('h2','',s.name),status=node('span','',s.status);
+  status.prepend(node('span','dot'));h.append(title,status);card.append(h);
+  card.append(node('p','',s.audioUrl));card.append(node('p','muted',s.destinations.filter(d=>d.enabled&&d.configured).length+' enabled RTMP destination(s) • 1280×720 • '+s.fps+'fps • '+s.bitrate+'kbps'));
+  if(s.error)card.append(node('p','msg',s.error));
+  const row=node('div','row');
+  row.append(action('Start',()=>api('/stations/'+s.id+'/start','POST'),''));
+  row.append(action('Stop',()=>api('/stations/'+s.id+'/stop','POST')));
+  row.append(action('Edit',()=>{openEditor(s);return Promise.resolve()}));
+  row.append(action('Delete',async()=>{if(confirm('Delete '+s.name+'?'))await api('/stations/'+s.id,'DELETE')},'danger'));
+  card.append(row);el.append(card);
+ }
+}
+function drawDests(){
+ const box=$('destinations');box.replaceChildren();
+ dests.forEach((d,i)=>{
+  const wrap=node('div','destination');
+  const label=node('label','', 'Destination '+(i+1));wrap.append(label);
+  const name=node('input');name.placeholder='YouTube Live / Twitch / Kick';name.value=d.name||'';name.oninput=()=>d.name=name.value;wrap.append(name);
+  const keyLabel=node('label','',d.configured?'RTMP URL (saved — leave blank to retain)':'RTMP publishing URL');wrap.append(keyLabel);
+  const url=node('input');url.placeholder='rtmps://server.example/live/STREAM_KEY';url.type='password';url.value='';url.oninput=()=>d.url=url.value;wrap.append(url);
+  const bar=node('div','row');bar.style.marginTop='10px';
+  const active=node('input');active.type='checkbox';active.style.width='auto';active.checked=d.enabled!==false;active.onchange=()=>d.enabled=active.checked;bar.append(active,node('span','muted','Enabled'));
+  bar.append(action('Remove',async()=>{dests.splice(i,1);drawDests()},'danger'));wrap.append(bar);box.append(wrap);
+ });
+}
+function openEditor(s){
+ editing=s||null;const f=$('form');f.reset();
+ f.elements.name.value=s?.name||'';f.elements.audioUrl.value=s?.audioUrl||'';f.elements.imagePath.value=s?.imagePath||'';
+ f.elements.fps.value=s?.fps||15;f.elements.bitrate.value=s?.bitrate||1500;
+ dests=s?s.destinations.map(d=>({...d,url:''})):[];
+ $('formTitle').textContent=s?'Edit '+s.name:'New radio station';drawDests();$('editor').hidden=false;$('editor').scrollIntoView({behavior:'smooth'});
+}
+$('add').onclick=()=>openEditor(null);$('cancel').onclick=()=>$('editor').hidden=true;
+$('addDest').onclick=()=>{dests.push({name:'',url:'',enabled:true});drawDests()};
+$('form').onsubmit=async e=>{
+ e.preventDefault();const f=e.target;
+ const data={name:f.elements.name.value,audioUrl:f.elements.audioUrl.value,imagePath:f.elements.imagePath.value,
+ fps:Number(f.elements.fps.value),bitrate:Number(f.elements.bitrate.value),destinations:dests};
+ try{await api('/stations'+(editing?'/'+editing.id:''),editing?'PUT':'POST',data);$('editor').hidden=true;message('');await refresh()}
+ catch(err){message(err.message)}
+};
+refresh().catch(e=>message(e.message));
+setInterval(()=>{if(document.visibilityState==='visible')refresh().catch(e=>message(e.message))},5000);
+</script></body></html>
