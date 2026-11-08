@@ -94,3 +94,33 @@ No audio player changes are required on the Raspberry Pi. CLIAMP's existing HLS 
 - Hardware encoder selection and worker capacity checks
 - Secure per-platform presets with encrypted credential storage
 - Streaming analytics, bitrate monitoring, and failover
+
+
+## GitHub-hosted Docker publishing (main only)
+
+Docker images are **built and pushed by GitHub-hosted** `ubuntu-latest` runners, not your Raspberry Pi or VPS. The workflow is `.github/workflows/docker-publish.yml`. It runs **only on pushes to `main`** that change Docker/application files; it does not run for PRs or feature branches. There is no manual or scheduled publish trigger. PRs still run JavaScript syntax and unit tests in CI, without Docker builds.
+
+The multi-architecture image is published to:
+
+```text
+ghcr.io/nekosuneprojects/cliamp-dashboard:latest
+ghcr.io/nekosuneprojects/cliamp-dashboard:sha-<commit>
+```
+
+Supported Linux architectures: `amd64` and `arm64`. The workflow logs in to GHCR using GitHub's built-in `GITHUB_TOKEN`, with `packages: write` scoped to its publish job. No personal access token is needed. The GHCR package may initially be **private** even when the repository is public. If you want anonymous pulls, open the package's settings on GitHub and explicitly change its visibility to **Public** after the first successful publication.
+
+### Pull the release on your VPS
+
+After merging this PR into `main` and the first successful GHCR publish:
+
+```bash
+cp .env.example .env
+nano .env
+mkdir -p data
+sudo chown -R 1000:1000 data
+docker compose -f compose.ghcr.yml pull
+docker compose -f compose.ghcr.yml up -d
+```
+
+`compose.ghcr.yml` uses the published image directly; unlike the development `docker-compose.yml`, it does **not** build the image locally. If the package remains private, Docker login to GHCR is needed on the VPS. Keep the dashboard behind HTTPS or a private VPN.
+
