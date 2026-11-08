@@ -85,6 +85,27 @@ No audio player changes are required on the Raspberry Pi. CLIAMP's existing HLS 
 - `POST /api/stations/:id/stop`: stop station
 
 
+## RTMP, RTMPS, SRT, RTSP and VRChat RTSPT publishing
+
+Choose the format for each destination in the dashboard. **RTMPS was already supported** and remains available. An RTSP-compatible server such as MediaMTX is required to *receive* RTSP publishing; FFmpeg cannot create a multi-client RTSP viewer server from a URL alone.
+
+| Destination selector | Example publishing URL | Transport / FFmpeg output |
+|---|---|---|
+| RTMP | `rtmp://relay.example/live/key` | FLV over RTMP |
+| RTMPS | `rtmps://relay.example/live/key` | FLV over TLS |
+| SRT | `srt://relay.example:9000?mode=caller&latency=200000` | MPEG-TS over SRT UDP |
+| RTSP | `rtsp://relay.example:8554/radio` | RTSP ANNOUNCE, UDP transport |
+| RTSPT (VRChat TCP style) | `rtspt://relay.example:8554/radio` | Internally translated to `rtsp://`, RTSP ANNOUNCE with TCP transport |
+
+**Important:** `rtspt://` is a **VRChat player-side URL convention**, not a supported FFmpeg protocol. The dashboard translates it when publishing. Your streaming server must support RTSP publishing (ANNOUNCE/RECORD) and distribute the stream to viewers. RTSP URL compatibility varies by VRChat player and build; some Quest clients only accept `rtsp://` while PC players may require `rtspt://`. A live receiver and each intended VRChat client should be tested before relying on cross-platform playback. No direct VRChat playback server is bundled in the dashboard.
+
+### FFmpeg exit 234 / tee outputs failed
+
+The previous FFmpeg argument builder contained a badly escaped `fifo_options` string (for example the trailing `er_any_error'` in the reported log). That could cause FFmpeg's tee output to fail with an invalid argument. The new builder removes that malformed string and uses separate muxer options for each supported destination. We successfully tested the corrected tee syntax locally with simultaneous FLV and MPEG-TS file outputs. This is not a live RTMP/RTSP/SRT receiver test.
+
+If you still see `All tee outputs failed` after upgrading: verify the server address, publishing stream key, network reachability, output protocol/port, and whether the receiver accepts the incoming format. RTSP uses port 8554 in the example; SRT needs outbound UDP; RTMPS needs TLS. Low 1 FPS output can also be rejected by some platforms. FFmpeg logs are exposed through the worker error with publishing URLs redacted.
+
+
 ## SRT restreaming (PR #3)
 
 Stations can now publish **RTMP, RTMPS and SRT simultaneously** using one 720p H.264/AAC encode per station. Choose the protocol separately for each destination in the NekoSune dashboard. RTMP/RTMPS is muxed as FLV; SRT is muxed as **MPEG-TS**.
