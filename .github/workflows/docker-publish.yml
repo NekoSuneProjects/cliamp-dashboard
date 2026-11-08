@@ -11,6 +11,8 @@ on:
       - package-lock.json
       - server.js
       - radio-worker.js
+      - station-metadata.js
+      - stream-destinations.js
       - public/**
       - .github/workflows/docker-publish.yml
 
