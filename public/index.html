@@ -30,7 +30,7 @@ button{border:1px solid #33764e;border-radius:11px;padding:11px 17px;cursor:poin
 <form id="form">
 <div class="grid"><div><label>Station name</label><input name="name" required maxlength="90" placeholder="Monstercat Music"></div><div><label>CLIAMP station ID (for auto metadata/art)</label><input name="sourceId" placeholder="monstercat-music"></div><div><label>HLS / audio stream URL</label><input name="audioUrl" type="url" required placeholder="https://radio.example/station/vrchat/index.m3u8"></div></div>
 <div class="grid"><div><label>Subtitle / tagline</label><input name="tagline" placeholder="LIVE RADIO" maxlength="80"></div><div><label>Frames per second (1 FPS is lowest CPU)</label><input name="fps" type="number" value="1" min="1" max="30"></div><div><label>Video bitrate (kbps)</label><input name="bitrate" type="number" value="1500" min="400" max="6000"></div></div>
-<label class="checkbox-line"><input name="autoStart" type="checkbox"> Automatically start on container launch</label><h3>Broadcast destinations</h3><p>Select RTMP, RTMPS or SRT per destination. RTMP uses a full publishing URL with stream key; SRT uses a caller URL with UDP port, optional streamid and encryption passphrase. Saved URLs are never returned by the API. Leave an existing URL blank to retain it.</p>
+<label class="checkbox-line"><input name="autoStart" type="checkbox"> Automatically start on container launch</label><h3>Broadcast destinations</h3><p>Select RTMP, RTMPS, SRT, RTSP or VRChat-style RTSP/TCP (RTSPT) per destination. RTMP uses a full publishing URL with stream key; SRT needs a caller URL and UDP port; RTSP/RTSPT needs a compatible RTSP publishing server. Saved URLs are never returned by the API. Leave an existing URL blank to retain it.</p>
 <div id="destinations"></div><button type="button" class="secondary" id="addDest">+ Add destination</button>
 <div class="row editor-footer"><button type="submit">Save station</button><button type="button" class="secondary" id="cancel">Cancel</button></div>
 </form>
@@ -87,13 +87,15 @@ function drawDests(){
   const label=node('label','', 'PUBLISH TARGET '+(i+1));wrap.append(label);
   const protocolLabel=node('label','', 'Output protocol');wrap.append(protocolLabel);
   const protocol=node('select');protocol.setAttribute('aria-label','Output protocol');
-  for(const type of ['rtmp','rtmps','srt']){const opt=node('option','',type.toUpperCase());opt.value=type;protocol.append(opt)}
-  protocol.value=d.protocol||'rtmp';protocol.onchange=()=>{d.protocol=protocol.value;url.placeholder=protocol.value==='srt'?'srt://ingest.example:9000?mode=caller&latency=200000':'rtmps://server.example/live/STREAM_KEY'};
+  for(const type of ['rtmp','rtmps','srt','rtsp','rtspt']){const opt=node('option','',type.toUpperCase());opt.value=type;protocol.append(opt)}
+  protocol.value=d.protocol||'rtmp';protocol.onchange=()=>{d.protocol=protocol.value;drawDests()};
   wrap.append(protocol);
   const name=node('input');name.placeholder='YouTube Live / Twitch / Kick';name.value=d.name||'';name.oninput=()=>d.name=name.value;wrap.append(name);
   const keyLabel=node('label','',d.configured?'RTMP URL (saved — leave blank to retain)':'RTMP/SRT publishing URL');wrap.append(keyLabel);
-  const url=node('input');url.placeholder=(d.protocol==='srt'?'srt://ingest.example:9000?mode=caller&latency=200000':'rtmps://server.example/live/STREAM_KEY');url.type='password';url.value='';url.oninput=()=>d.url=url.value;wrap.append(url);
-  if((d.protocol||'rtmp')==='srt')wrap.append(node('small','muted','SRT uses UDP and sends H.264/AAC inside MPEG-TS. The remote receiver must accept caller-mode SRT.'));
+  const url=node('input');url.placeholder=d.protocol==='srt'?'srt://ingest.example:9000?mode=caller&latency=200000':d.protocol==='rtsp'?'rtsp://media.example:8554/radio':d.protocol==='rtspt'?'rtspt://media.example:8554/radio':'rtmps://server.example/live/STREAM_KEY';url.type='password';url.value='';url.oninput=()=>d.url=url.value;wrap.append(url);
+  if(d.protocol==='srt')wrap.append(node('small','muted','SRT uses UDP and sends H.264/AAC inside MPEG-TS to a listening receiver.'));
+  if(d.protocol==='rtsp'||d.protocol==='rtspt')wrap.append(node('small','muted',d.protocol==='rtspt'?'VRChat TCP-style RTSP: converted to rtsp:// with TCP transport for FFmpeg publishing.':'Standard RTSP: publish via UDP transport to an RTSP server supporting ANNOUNCE.'));
+  if(d.protocol==='rtmps')wrap.append(node('small','muted','Secure RTMP over TLS; use the full server URL and stream key.'));
   const bar=node('div','row');bar.style.marginTop='10px';
   const active=node('input');active.type='checkbox';active.style.width='auto';active.checked=d.enabled!==false;active.onchange=()=>d.enabled=active.checked;bar.append(active,node('span','muted','Enabled'));
   bar.append(action('Remove',async()=>{dests.splice(i,1);drawDests()},'danger'));wrap.append(bar);box.append(wrap);
