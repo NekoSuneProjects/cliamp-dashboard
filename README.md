@@ -1,4 +1,4 @@
-# CLIAMP RTMP Dashboard
+# CLIAMP RTMP / SRT Dashboard
 
 A lightweight, authenticated Node.js control panel for turning existing CLIAMP radio streams into **720p RTMP/RTMPS live video**. Intended to run on a VPS or a dedicated encoding machine, **not** on the Raspberry Pi hosting CLIAMP.
 
@@ -83,6 +83,26 @@ No audio player changes are required on the Raspberry Pi. CLIAMP's existing HLS 
 - `DELETE /api/stations/:id`: delete station
 - `POST /api/stations/:id/start`: start station
 - `POST /api/stations/:id/stop`: stop station
+
+
+## SRT restreaming (PR #3)
+
+Stations can now publish **RTMP, RTMPS and SRT simultaneously** using one 720p H.264/AAC encode per station. Choose the protocol separately for each destination in the NekoSune dashboard. RTMP/RTMPS is muxed as FLV; SRT is muxed as **MPEG-TS**.
+
+For example, add an SRT destination:
+
+```text
+Protocol: SRT
+Name: Remote SRT ingest
+Publishing URL: srt://ingest.example.org:9000?mode=caller&latency=200000
+```
+
+The destination must be a reachable **SRT listener**, and the VPS must be allowed to make outbound UDP connections to its port. This feature publishes using SRT **caller** mode only; it does not create a public inbound SRT ingest listener. Use an SRT relay/receiver such as your media server or a configured FFmpeg listener. A passphrase can be supplied in the URL with `passphrase` (10–79 characters) and matching receiver settings. If encrypting, configure the receiver's matching `pbkeylen` as needed.
+
+SRT publishing URLs may contain sensitive passphrases or stream IDs. Treat `data/stations.json` as private. The API returns only the destination name, protocol, enabled/configured state and generated ID—not the full URL. The worker redacts publishing URLs in its captured errors.
+
+**Limits:** The SRT output currently sends MPEG-TS with the same low-FPS 720p video as RTMP, and shares the encoding budget. Platform-specific SRT stream ID / encryption parameters must be entered in the URL. FFmpeg-process status is not proof every destination is receiving media; verify the actual SRT receiver. Some destinations require frame rates higher than 1 FPS.
+
 
 ## Future development
 
