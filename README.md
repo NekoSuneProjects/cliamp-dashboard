@@ -99,6 +99,31 @@ Choose the format for each destination in the dashboard. **RTMPS was already sup
 
 **Important:** `rtspt://` is a **VRChat player-side URL convention**, not a supported FFmpeg protocol. The dashboard translates it when publishing. Your streaming server must support RTSP publishing (ANNOUNCE/RECORD) and distribute the stream to viewers. RTSP URL compatibility varies by VRChat player and build; some Quest clients only accept `rtsp://` while PC players may require `rtspt://`. A live receiver and each intended VRChat client should be tested before relying on cross-platform playback. No direct VRChat playback server is bundled in the dashboard.
 
+### Optional RTSP relay for VRChat playback
+
+If you don't already have an RTSP server that accepts publishers, run the provided optional MediaMTX relay alongside the GHCR dashboard. It is **not** included in the GHCR application image:
+
+```bash
+docker compose -f compose.ghcr.yml -f compose.rtsp-relay.yml up -d
+```
+
+The relay is on the same Docker network as the dashboard. In the dashboard add a **RTSPT** publishing destination pointing at:
+
+```text
+rtspt://mediamtx:8554/monstercat-music
+```
+
+FFmpeg will translate that to `rtsp://mediamtx:8554/monstercat-music` and publish using TCP. For a VRChat player outside Docker, try these **viewer** addresses using the VPS public hostname, not the Docker service hostname:
+
+```text
+rtsp://YOUR-VPS-HOST:8554/monstercat-music
+rtspt://YOUR-VPS-HOST:8554/monstercat-music
+```
+
+The included MediaMTX profile enables **TCP only** to avoid Docker's UDP/NAT issues. VRChat Quest/Android versus PC RTSP support depends on client version and video-player implementation; Quest may require UDP or an updated player, and therefore this optional TCP-only setup is **not guaranteed** to work on both clients. For broader RTSP UDP/TCP support, configure a dedicated MediaMTX service with host networking and firewall/authentication suited to your deployment.
+
+**Security:** the example relay has no publisher authentication by default and exposes port 8554/TCP. Do not expose it to untrusted networks without configuring MediaMTX authentication and appropriate firewall rules. Restrict access while testing.
+
 ### FFmpeg exit 234 / tee outputs failed
 
 The previous FFmpeg argument builder contained a badly escaped `fifo_options` string (for example the trailing `er_any_error'` in the reported log). That could cause FFmpeg's tee output to fail with an invalid argument. The new builder removes that malformed string and uses separate muxer options for each supported destination. We successfully tested the corrected tee syntax locally with simultaneous FLV and MPEG-TS file outputs. This is not a live RTMP/RTSP/SRT receiver test.
