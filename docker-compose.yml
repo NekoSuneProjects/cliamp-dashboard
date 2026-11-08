@@ -7,6 +7,7 @@ services:
     environment:
       PORT: "8096"
       DATA_DIR: /data
+      CLIAMP_BASE_URL: ${CLIAMP_BASE_URL:?Set CLIAMP_BASE_URL in .env}
       DASHBOARD_USER: ${DASHBOARD_USER:?Set DASHBOARD_USER in .env}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env}
     volumes:
