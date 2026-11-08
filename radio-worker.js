@@ -33,15 +33,15 @@ export async function discover(baseURL,signal) {
 async function render(s,track,artBuffer){
  const base=sharp(svgBackground(s,track)).png();
  const overlays=[];
+ const fallbackCover=Buffer.from('<svg width="390" height="390" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="p" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#17344a"/><stop offset="1" stop-color="#0d3428"/></linearGradient></defs><rect width="390" height="390" rx="22" fill="url(#p)"/><circle cx="195" cy="177" r="110" fill="#35c887" opacity="0.16"/><circle cx="195" cy="177" r="71" fill="none" stroke="#62f6aa" stroke-width="6" opacity="0.8"/><circle cx="195" cy="177" r="15" fill="#62f6aa"/><text x="195" y="335" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="26" fill="#c8f9de">LIVE RADIO</text></svg>');
  if(!artBuffer){
-  const placeholder=Buffer.from('<svg width="390" height="390" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="p" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#17344a"/><stop offset="1" stop-color="#0d3428"/></linearGradient></defs><rect width="390" height="390" rx="22" fill="url(#p)"/><circle cx="195" cy="177" r="110" fill="#35c887" opacity="0.16"/><circle cx="195" cy="177" r="71" fill="none" stroke="#62f6aa" stroke-width="6" opacity="0.8"/><circle cx="195" cy="177" r="15" fill="#62f6aa"/><text x="195" y="335" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="26" fill="#c8f9de">LIVE RADIO</text></svg>');
-  overlays.push({input:placeholder,left:100,top:170});
+  overlays.push({input:fallbackCover,left:100,top:170});
  }
  if(artBuffer){
   try{
    const cover=await sharp(artBuffer,{limitInputPixels:12_000_000}).resize(390,390,{fit:'contain',background:'#182337'}).png().toBuffer();
    overlays.push({input:cover,left:100,top:170});
-  }catch{} // Bad artwork must not interrupt playback.
+  }catch{overlays.push({input:fallbackCover,left:100,top:170});} // Malformed cover bytes must not leave an empty area.
  }
  return base.composite(overlays).jpeg({quality:83,mozjpeg:false}).toBuffer();
 }
