@@ -112,6 +112,7 @@ export class RadioWorker {
   this.ff=ff;this.publish({status:'starting',error:null});
   let lines='';
   ff.stderr.on('data',data=>{lines=logSafe((lines+String(data)).slice(-3000));});
+  ff.stdin.on('error',()=>{}); // Broken pipe during worker shutdown or reconnect.
   const exit=new Promise((resolve,reject)=>{
    ff.once('error',reject);
    ff.once('exit',(code,signal)=>resolve({code,signal}));
@@ -133,14 +134,13 @@ export class RadioWorker {
    }catch(e){this.publish({metadataError:e.message});}
   };
   await update();
-  let timer;
   try{
    // Timestamp cadence lives in the worker; cached JPEG is only recomputed on metadata/art changes.
    const frameLoop=(async()=>{
     let count=0;
     while(this.running && this.ff===ff && !ff.stdin.destroyed){
-     if(count++ % Math.max(1,fps*5)===0)void update();
-     if(!ff.stdin.write(frame))await new Promise(resolve=>ff.stdin.once('drain',resolve));
+     if(count++ % Math.max(1,fps*5)===0 && !this.metadataPending){this.metadataPending=true;void update().finally(()=>{this.metadataPending=false;});}
+     if(!ff.stdin.write(frame))await Promise.race([new Promise(resolve=>{ff.stdin.once('drain',resolve);ff.stdin.once('close',resolve);ff.stdin.once('error',resolve);}),sleep(1500)]);
      await sleep(Math.round(1000/fps),undefined,{signal:this.abort.signal}).catch(()=>{});
      if(this.abort.signal.aborted)break;
     }
