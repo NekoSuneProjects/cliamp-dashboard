@@ -60,8 +60,13 @@ async function refresh(){
   status.prepend(node('span','dot'));h.append(title,status);card.append(h);
   card.append(node('div','station-url',s.audioUrl));
   const playing=node('div','now-playing');playing.append(node('div','eyebrow','NOW PLAYING'));
+  const metaHint=s.metadataStatus==='unconfigured'?'Set the CLIAMP station ID in Configure.':
+   s.metadataStatus==='unavailable'?'Metadata unavailable: '+(s.metadataError||'Check CLIAMP API connectivity'):
+   s.metadataStatus==='no-track'?'CLIAMP API has not reported a current track.':
+   s.metadataStatus==='checking'?'Checking CLIAMP metadata…':'Waiting for track title from CLIAMP';
   playing.append(node('strong','',s.track?.title||'Live radio broadcast'));
-  playing.append(node('small','',s.track?.artist||'Waiting for CLIAMP metadata'));
+  playing.append(node('small','',s.track?.artist||metaHint));
+  if(s.metadataStatus==='unavailable'||s.metadataStatus==='unconfigured')playing.append(node('small','', 'Audio can continue playing while metadata is unavailable.'));
   card.append(playing);
   const spec=node('div','spec');
   for(const item of ['1280 × 720',s.fps+' FPS',s.bitrate+' kbps',s.destinations.filter(d=>d.enabled&&d.configured).length+' destinations'])spec.append(node('span','',item));
