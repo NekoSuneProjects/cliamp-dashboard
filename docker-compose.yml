@@ -1,0 +1,14 @@
+services:
+  cliamp-dashboard:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    environment:
+      PORT: "8096"
+      DATA_DIR: /data
+      DASHBOARD_USER: ${DASHBOARD_USER:?Set DASHBOARD_USER in .env}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env}
+    volumes:
+      - ./data:/data
+    # Run this service on the VPS/video worker, NOT on the Raspberry Pi.
