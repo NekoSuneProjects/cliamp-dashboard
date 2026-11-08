@@ -3,12 +3,14 @@ import {randomUUID,timingSafeEqual} from 'node:crypto';
 import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {RadioWorker,discover} from './radio-worker.js';
+import {sourceIdFor,readMetadata} from './station-metadata.js';
 
 const PORT=Number(process.env.PORT||8096),DIR=process.env.DATA_DIR||'./data';
 const STORE=join(DIR,'stations.json'),BASE=process.env.CLIAMP_BASE_URL||'';
 const USER=process.env.DASHBOARD_USER||'',PASS=process.env.DASHBOARD_PASSWORD||'';
 if(!USER||!PASS){console.error('Configure DASHBOARD_USER and DASHBOARD_PASSWORD');process.exit(1);}
-const workers=new Map(),statuses=new Map();
+const workers=new Map(),statuses=new Map(),metadata=new Map();
+let metadataRefreshBusy=false;
 let config=[];
 function auth(req){
  const expected=Buffer.from('Basic '+Buffer.from(USER+':'+PASS).toString('base64'));
@@ -21,9 +23,12 @@ function reply(res,code,obj){
 }
 function publicStation(s){
  const state=statuses.get(s.id)||{status:'stopped'};
+ const live=metadata.get(s.id);
+ const currentTrack=live?.track?.title||live?.track?.artist?live.track:state.track;
  return {id:s.id,sourceId:s.sourceId||'',name:s.name,tagline:s.tagline||'',audioUrl:s.audioUrl,
  fps:s.fps,bitrate:s.bitrate,autoStart:!!s.autoStart,
- destinations:s.destinations.map(d=>({id:d.id,name:d.name,enabled:d.enabled,configured:!!d.url})),...state};
+ destinations:s.destinations.map(d=>({id:d.id,name:d.name,enabled:d.enabled,configured:!!d.url})),...state,
+ track:currentTrack||null,metadataStatus:live?.status||'checking',metadataError:live?.error||null,metadataUpdatedAt:live?.updatedAt||null};
 }
 function checkURL(value,protocols){
  const u=new URL(String(value||''));
@@ -69,6 +74,29 @@ async function start(s){
  workers.set(s.id,w);
  try{await w.start()}catch(e){workers.delete(s.id);throw e}
 }
+// Poll CLIAMP independently of FFmpeg; music may play while an RTMP worker is stopped.
+async function refreshMetadata(){
+ if(metadataRefreshBusy||!BASE)return;
+ metadataRefreshBusy=true;
+ try{
+  await Promise.all(config.map(async s=>{
+   const sourceId=sourceIdFor(s,BASE);
+   if(!sourceId){
+    metadata.set(s.id,{status:'unconfigured',error:'Set a CLIAMP station ID or use an audio URL from the configured CLIAMP server.'});
+    return;
+   }
+   try{
+    const info=await readMetadata(BASE,sourceId,AbortSignal.timeout(6000));
+    metadata.set(s.id,{status:info.title||info.artist?'connected':'no-track',
+      track:{title:info.title,artist:info.artist,album:info.album},
+      online:info.online,error:null,updatedAt:new Date().toISOString()});
+   }catch(error){
+    const old=metadata.get(s.id)||{};
+    metadata.set(s.id,{...old,status:'unavailable',error:String(error.message||'Metadata unavailable').slice(0,160)});
+   }
+  }));
+ }finally{metadataRefreshBusy=false;}
+}
 async function importRadios(){
  if(!BASE)throw Error('CLIAMP_BASE_URL is not configured');
  const found=await discover(BASE,AbortSignal.timeout(8000));
@@ -78,7 +106,7 @@ async function importRadios(){
   const s=validate({name:item.name,sourceId:item.id,audioUrl:item.audioUrl,tagline:'LIVE RADIO',fps:1,bitrate:1500,destinations:[]});
   config.push(s);added++;
  }
- if(added)await persist();
+ if(added){await persist();void refreshMetadata();}
  return {added,total:found.length,radios:found};
 }
 async function handler(req,res){
@@ -97,7 +125,7 @@ async function handler(req,res){
   }
   if(req.method==='POST'&&url.pathname==='/api/import'){reply(res,200,await importRadios());return;}
   if(req.method==='POST'&&url.pathname==='/api/stations'){
-   const s=validate(await body(req));config.push(s);await persist();reply(res,201,publicStation(s));return;
+   const s=validate(await body(req));config.push(s);await persist();void refreshMetadata();reply(res,201,publicStation(s));return;
   }
   const match=/^\/api\/stations\/([a-f0-9-]+)(?:\/(start|stop))?$/.exec(url.pathname);
   if(match){
@@ -105,10 +133,10 @@ async function handler(req,res){
    if(!s){reply(res,404,{error:'Not found'});return;}
    if(req.method==='PUT'&&!match[2]){
     const next=validate(await body(req),s);
-    await stop(s.id);config=config.map(x=>x.id===s.id?next:x);await persist();reply(res,200,publicStation(next));return;
+    await stop(s.id);config=config.map(x=>x.id===s.id?next:x);metadata.delete(s.id);await persist();void refreshMetadata();reply(res,200,publicStation(next));return;
    }
    if(req.method==='DELETE'&&!match[2]){
-    await stop(s.id);config=config.filter(x=>x.id!==s.id);await persist();reply(res,200,{ok:true});return;
+    await stop(s.id);config=config.filter(x=>x.id!==s.id);metadata.delete(s.id);await persist();reply(res,200,{ok:true});return;
    }
    if(req.method==='POST'&&match[2]==='start'){await start(s);reply(res,200,publicStation(s));return;}
    if(req.method==='POST'&&match[2]==='stop'){await stop(s.id);reply(res,200,publicStation(s));return;}
@@ -121,6 +149,9 @@ catch(e){if(e.code!=='ENOENT'){console.error('Failed loading data',e);process.ex
 const server=http.createServer((req,res)=>{handler(req,res).catch(e=>reply(res,500,{error:e.message}));});
 server.listen(PORT,'0.0.0.0',()=>{
  console.log('CLIAMP RTMP worker on port '+PORT);
+ void refreshMetadata();
+ const timer=setInterval(()=>void refreshMetadata(),10000);
+ timer.unref();
  for(const s of config.filter(s=>s.autoStart))start(s).catch(e=>console.error('Autostart',s.name,e.message));
 });
 async function shutdown(){server.close();await Promise.all([...workers.keys()].map(stop));process.exit(0);}
