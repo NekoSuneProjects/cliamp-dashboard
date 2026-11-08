@@ -194,7 +194,7 @@ docker compose -f compose.ghcr.yml up -d
 
 ## Missing cover artwork (VPS fallback)
 
-The VPS worker first requests `/<station>/art.png` from CLIAMP. That endpoint may return 404 when no cover has been saved by CLIAMP's optional VRChat HLS visual system, even if the stream is playing normally. In this case, the worker performs an artist/title-matched lookup against Apple's public iTunes search API and uses a matching cover when available. If the catalogue has no exact match or networking is unavailable, a branded green **LIVE RADIO** artwork tile is rendered instead. The last valid image persists through short failures and worker reconnects. No extra API key is needed.
+The VPS worker first requests `/<station>/art.png` from CLIAMP. That endpoint may return 404 when no cover has been saved by CLIAMP's optional VRChat HLS visual system, even if the stream is playing normally. In this case, the worker performs an artist/title-matched lookup against Apple's public iTunes search API and uses a matching cover when available. If the catalogue has no exact match or networking is unavailable, a 390×390 **CD jewel-case** placeholder with a visible reflective compact disc, transparent plastic lid and LIVE RADIO label is rendered instead. The last valid image persists through short failures and worker reconnects. No extra API key is needed.
 
 On the VPS, allow outbound HTTPS to the configured CLIAMP host, `itunes.apple.com`, and approved `mzstatic.com` artwork hosts. Covers are capped at 4 MiB. This fallback does not guarantee artwork exists for every independent track; to enforce a particular cover, add it to CLIAMP's saved per-track artwork library.
 
